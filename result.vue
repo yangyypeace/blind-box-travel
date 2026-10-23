@@ -1,65 +1,70 @@
 <template>
-  <view class="page-container">
+  <view class="page-bg">
+    <image class="bg-img" src="/static/bg.jpg" mode="aspectFill"></image>
+    <view class="bg-mask"></view>
 
-    <!-- 加载状态（AI 思考时的动画） -->
-    <view v-if="isLoading" class="loading-wrapper">
-      <view class="globe-animation">🌍</view>
-      <text class="loading-title">正在为你探索未知...</text>
-      <text class="loading-sub">AI 正在规划行程，请稍候</text>
+    <view class="loading-screen" v-if="isLoading">
+      <view class="spinner"></view>
+      <text class="load-text">正在探索未知的坐标...</text>
+      <text class="load-sub">AI 正在为你规划惊喜</text>
     </view>
 
-    <!-- 结果展示区 -->
-    <view v-else class="result-wrapper">
-      <!-- 顶部盲盒揭晓提示 -->
-      <view class="reveal-header">
-        <text class="reveal-title">盲盒已开启</text>
-        <text class="reveal-sub">属于你的 {{ mood }} 之旅</text>
+    <view class="result-screen" v-else>
+      <view class="header-tag"><text class="tag-text">Secret Destination</text></view>
+
+      <view class="postcard">
+        <view class="dest-header">
+          <text class="dest-title">盲盒已开启</text>
+          <view class="divider"></view>
+        </view>
+
+        <scroll-view class="scroll-content" scroll-y="true">
+          <rich-text :nodes="formattedPlan" class="plan-html"></rich-text>
+        </scroll-view>
       </view>
 
-      <!-- 路书正文卡片 -->
-      <view class="plan-card">
-        <text class="plan-text">{{ aiPlan }}</text>
-      </view>
-
-      <!-- 底部悬浮按钮 -->
-      <view class="floating-actions">
-        <button class="action-btn btn-secondary" @click="copyPlan">📋 复制路书</button>
-        <button class="action-btn btn-primary" @click="goBack">🔄 换个盲盒</button>
+      <view class="bottom-bar">
+        <button class="btn-copy" @click="copyPlan">复制路书</button>
+        <button class="btn-again" @click="goBack">再抽一次</button>
       </view>
     </view>
-
   </view>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 
 const isLoading = ref(true)
 const aiPlan = ref('')
 const mood = ref('')
 
-// ⚠️⚠️⚠️ 记得换成你真实的 API Key ⚠️⚠️⚠️
-const DEEPSEEK_API_KEY = 'sk-这里填你自己的真实密钥'
+const DEEPSEEK_API_KEY = 'sk-sk-18681990fb48431a904bb99378910a5e'
 
 onLoad((options) => {
   mood.value = options.mood || '惊喜'
-  fetchPlanFromAI(options.budget, options.days, options.mood)
+  fetchPlan(options.budget, options.days, options.mood)
 })
 
-const fetchPlanFromAI = async (budget, days, mood) => {
+const formattedPlan = computed(() => {
+  if (!aiPlan.value) return ''
+  let html = aiPlan.value.replace(/\*\*(.*?)\*\*/g, '<span style="font-size:36rpx; font-weight:bold; color:#1E293B; display:block; margin-top:20rpx; margin-bottom:10rpx;">$1</span>')
+  html = html.replace(/\n/g, '<br/>')
+  return html
+})
+
+const fetchPlan = async (budget, days, mood) => {
   try {
-    // 高级提示词工程
-    const prompt = `你是一个资深的盲盒旅行策划师。请随机为用户推荐一个国内的宝藏目的地，并为其制定一个${days}天的旅行攻略。
-预算限制：${budget}元以内。
-偏好风格：${mood}。
-输出要求：
-1. 格式排版极其整洁，条理清晰。
-2. 不要寒暄，直接给干货。
-3. 必须包含：目的地（要加粗）、行程亮点（2-3点）、每日行程安排（详细到吃饭和游玩）。`
+    const prompt = `你是一个充满文艺气息的旅行盲盒策划师。请随机推荐一个国内目的地，并制定${days}天攻略。
+预算：${budget}元内。风格：${mood}。
+要求：
+1. 不要废话，直接输出干货。
+2. 第一行必须用【地名】单独写出目的地。
+3. 采用**加粗**来写每天的行程标题（如 **Day 1：初见大理**）。`
 
     const res = await uni.request({
-      url: '/api/chat/completions',
+      // 注意：这里必须是真实地址，不能是 /api
+      url: 'https://api.deepseek.com/chat/completions',
       method: 'POST',
       header: {
         'Content-Type': 'application/json',
@@ -73,132 +78,66 @@ const fetchPlanFromAI = async (budget, days, mood) => {
 
     if (res.data && res.data.choices) {
       aiPlan.value = res.data.choices[0].message.content
+      saveToHistory() // AI 生成成功后，自动存入本地历史
     } else {
-      aiPlan.value = 'AI 生成失败，请检查 Key 或余额。'
+      aiPlan.value = '生成失败，请检查 Key。'
     }
-  } catch (error) {
-    aiPlan.value = '网络请求失败，请检查是否配置了代理。'
+  } catch (e) {
+    aiPlan.value = '网络异常，请重试。'
   } finally {
     isLoading.value = false
   }
 }
 
-const copyPlan = () => {
-  uni.setClipboardData({
-    data: aiPlan.value,
-    success: () => uni.showToast({ title: '已复制', icon: 'success' })
+// 把生成的数据存到手机本地缓存
+const saveToHistory = () => {
+  let history = uni.getStorageSync('travelHistory') || '[]'
+  let list = JSON.parse(history)
+
+  // 提取第一行的地名（去掉星号）
+  const firstLine = aiPlan.value.split('\n')[0].replace(/[*#【】]/g, '')
+
+  // 插入到数组最前面
+  list.unshift({
+    destination: firstLine || '未知目的地',
+    mood: mood.value,
+    date: new Date().toLocaleDateString(),
+    preview: aiPlan.value.substring(firstLine.length, 60)
   })
+
+  // 最多保存 10 条
+  if(list.length > 10) list.pop()
+
+  uni.setStorageSync('travelHistory', JSON.stringify(list))
 }
 
-const goBack = () => {
-  uni.navigateBack()
+const copyPlan = () => {
+  uni.setClipboardData({ data: aiPlan.value, success: () => uni.showToast({ title: '已复制', icon: 'none' }) })
 }
+const goBack = () => uni.navigateBack()
 </script>
 
 <style>
-/* 页面基础 */
-.page-container {
-  min-height: 100vh;
-  background-color: #F8FAFC;
-  padding-bottom: 160rpx; /* 给底部按钮留空间 */
-}
-
-/* 动画区 */
-.loading-wrapper {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 80vh;
-}
-.globe-animation {
-  font-size: 100rpx;
-  animation: spin 4s linear infinite;
-  margin-bottom: 40rpx;
-}
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-.loading-title {
-  font-size: 34rpx;
-  font-weight: 600;
-  color: #1E293B;
-  margin-bottom: 12rpx;
-}
-.loading-sub {
-  font-size: 26rpx;
-  color: #94A3B8;
-}
-
-/* 结果区 */
-.result-wrapper {
-  padding: 40rpx;
-}
-.reveal-header {
-  text-align: center;
-  margin-bottom: 40rpx;
-  margin-top: 20rpx;
-}
-.reveal-title {
-  display: block;
-  font-size: 44rpx;
-  font-weight: 800;
-  color: #1E293B;
-  margin-bottom: 10rpx;
-}
-.reveal-sub {
-  font-size: 26rpx;
-  color: #64748B;
-  background: #E2E8F0;
-  padding: 6rpx 20rpx;
-  border-radius: 20rpx;
-}
-
-/* 路书卡片：高级阴影与内边距 */
-.plan-card {
-  background: #FFFFFF;
-  border-radius: 24rpx;
-  padding: 40rpx;
-  box-shadow: 0 10rpx 40rpx rgba(0,0,0,0.06);
-  border: 1px solid #F1F5F9;
-}
-.plan-text {
-  font-size: 30rpx;
-  color: #334155;
-  line-height: 1.8;
-  white-space: pre-wrap; /* 保留 AI 生成的换行 */
-}
-
-/* 底部悬浮按钮 */
-.floating-actions {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  padding: 20rpx 40rpx 60rpx 40rpx;
-  background: linear-gradient(to top, #F8FAFC 80%, rgba(248,250,252,0));
-  display: flex;
-  gap: 20rpx;
-}
-.action-btn {
-  flex: 1;
-  border-radius: 50rpx;
-  font-size: 30rpx;
-  font-weight: 600;
-  padding: 10rpx 0;
-}
-.btn-secondary {
-  background-color: #FFFFFF;
-  color: #1E293B;
-  border: 2rpx solid #E2E8F0;
-}
-.btn-primary {
-  background-color: #1E293B;
-  color: #FFFFFF;
-  border: none;
-}
-.action-btn::after {
-  border: none;
-}
+/* 这里的样式与之前一致，确保你的滚动、卡片、加载动画好看 */
+.page-bg { position: relative; min-height: 100vh; overflow: hidden; background: #1a1a1a; }
+.bg-img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; filter: blur(10px); }
+.bg-mask { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 2; }
+.loading-screen { position: relative; z-index: 3; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; }
+.spinner { width: 80rpx; height: 80rpx; border: 4rpx solid rgba(255,255,255,0.2); border-top-color: #FF8E53; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 40rpx; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.load-text { font-size: 34rpx; color: #fff; font-weight: bold; margin-bottom: 10rpx; }
+.load-sub { font-size: 26rpx; color: rgba(255,255,255,0.6); }
+.result-screen { position: relative; z-index: 3; height: 100vh; display: flex; flex-direction: column; padding: 60rpx 40rpx; box-sizing: border-box; }
+.header-tag { align-self: center; border: 1px solid rgba(255,255,255,0.3); padding: 8rpx 30rpx; border-radius: 30rpx; margin-bottom: 30rpx; }
+.tag-text { color: #fff; font-size: 22rpx; letter-spacing: 4rpx; }
+.postcard { flex: 1; background: #F8FAFC; border-radius: 24rpx; padding: 40rpx; display: flex; flex-direction: column; box-shadow: 0 20rpx 50rpx rgba(0,0,0,0.5); overflow: hidden; }
+.dest-header { text-align: center; margin-bottom: 30rpx; }
+.dest-title { font-size: 46rpx; font-weight: 900; color: #1E293B; letter-spacing: 2rpx; }
+.divider { width: 60rpx; height: 6rpx; background: #FF8E53; margin: 20rpx auto 0; border-radius: 6rpx; }
+.scroll-content { flex: 1; overflow-y: auto; padding-bottom: 40rpx; }
+.plan-html { font-size: 30rpx; color: #475569; line-height: 1.8; }
+.bottom-bar { display: flex; gap: 20rpx; margin-top: 40rpx; }
+.btn-copy, .btn-again { flex: 1; border-radius: 50rpx; font-size: 30rpx; font-weight: bold; padding: 10rpx 0; border: none; }
+.btn-copy { background: rgba(255,255,255,0.15); color: #fff; border: 1px solid rgba(255,255,255,0.3); }
+.btn-again { background: #FF8E53; color: #fff; }
 </style>
